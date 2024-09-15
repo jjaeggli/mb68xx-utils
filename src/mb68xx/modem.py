@@ -1,10 +1,70 @@
 import hmac
-import time
-import requests
 import json
+import requests
+import time
+
+from data import ConnectionInfo, DownstreamChannelInfo, UpstreamChannelInfo
+from typing import Iterator
+
 
 _DIGEST_MD5 = 'MD5'
 _ACTION_FORMAT = 'http://purenetworks.com/HNAP1/{}'
+
+
+class MultipleHnapsResponse():
+    PARENT_KEY = 'GetMultipleHNAPsResponse'
+    STARTUP_SEQUENCE = 'GetMotoStatusStartupSequenceResponse'
+    CONNECTION_INFO = 'GetMotoStatusConnectionInfoResponse'
+    DOWNSTREAM_CHANNEL_INFO = 'GetMotoStatusDownstreamChannelInfoResponse'
+    UPSTREAM_CHANNEL_INFO = 'GetMotoStatusUpstreamChannelInfoResponse'
+    MOTO_LAG_STATUS = 'GetMotoLagStatusResponse'
+    MULTIPLE_HNAPS = 'GetMultipleHNAPsResult'
+
+    # Keys indexed in order of MotoConnDownstreamChannel / MotoConnUpstreamChannel response.
+    DOWNSTREAM_KEYS = ['channel', 'locked', 'modulation',
+                       'channel_id', 'freq', 'pwr', 'snr', 'corrected', 'uncorrected']
+    UPSTREAM_KEYS = ['channel', 'locked', 'type', 'channel_id', 'rate', 'freq', 'pwr']
+
+    def __init__(self, json_response):
+        self.response = json_response[self.PARENT_KEY]
+
+    def getConnectionInfo(self) -> ConnectionInfo:
+        # {'MotoConnSystemUpTime': '0 days 00h:55m:13s',
+        #  'MotoConnNetworkAccess': 'Allowed',
+        #  'GetMotoStatusConnectionInfoResult': 'OK'}
+        info = self.response[self.CONNECTION_INFO]
+        days, hms = info['MotoConnSystemUpTime'].split(' days ')
+        parsed = time.strptime(hms, '%Hh:%Mm:%Ss')
+        uptime = (int(days) * 24 * 3600 + parsed.tm_hour * 3600 + parsed.tm_min * 60 + parsed.tm_sec)
+
+        return ConnectionInfo(
+            uptime=uptime,
+            network_access=info['MotoConnNetworkAccess'].lower() == 'allowed'
+        )
+
+    def getDownstreamChannelInfo(self) -> Iterator[DownstreamChannelInfo]:
+        channels = self.response[self.DOWNSTREAM_CHANNEL_INFO]['MotoConnDownstreamChannel']
+        for ch in channels.split('|+|'):
+            channel = dict(zip(self.DOWNSTREAM_KEYS, ch.strip('^').split('^')))
+
+            yield DownstreamChannelInfo(
+                locked=(channel['locked'].lower() == 'locked'),
+                pwr=float(channel['pwr']),
+                snr=float(channel['snr']),
+                corrected=int(channel['corrected']),
+                uncorrected=int(channel['uncorrected']),
+            )
+
+    def getUpstreamChannelInfo(self) -> Iterator[UpstreamChannelInfo]:
+        channels = self.response[self.UPSTREAM_CHANNEL_INFO]['MotoConnUpstreamChannel']
+        for ch in channels.split('|+|'):
+            channel = dict(zip(self.UPSTREAM_KEYS, ch.strip('^').split('^')))
+
+            yield UpstreamChannelInfo(
+                locked=(channel['locked'].lower() == 'locked'),
+                rate=int(channel['rate']),
+                pwr=float(channel['pwr']),
+            )
 
 
 class Modem:
@@ -80,19 +140,20 @@ class Modem:
         pubkey = lrdata['PublicKey']
         challenge = lrdata['Challenge']
         privkey, passkey = self._generate_keys(challenge.encode(),
-                                              pubkey.encode())
+                                               pubkey.encode())
         self.cookie_id = lrdata['Cookie']
         self.privatekey = privkey
         return self._login_real(passkey)
 
-    def get_status(self):
+    def get_status(self) -> MultipleHnapsResponse:
         """Request metrics from the modem."""
         payload = {'GetMultipleHNAPs': {'GetMotoStatusStartupSequence': '',
                                         'GetMotoStatusConnectionInfo': '',
                                         'GetMotoStatusDownstreamChannelInfo': '',
                                         'GetMotoStatusUpstreamChannelInfo': '',
                                         'GetMotoLagStatus': ''}}
-        return self._soap_action('GetMultipleHNAPs', payload)
+        response = self._soap_action('GetMultipleHNAPs', payload)
+        return MultipleHnapsResponse(response.json())
 
     def reboot(self) -> requests.Response:
         """Perform a modem reboot."""
