@@ -1,5 +1,4 @@
 import hmac
-import json
 import requests
 import time
 
@@ -9,6 +8,20 @@ from typing import Iterator
 
 _DIGEST_MD5 = 'MD5'
 _ACTION_FORMAT = 'http://purenetworks.com/HNAP1/{}'
+
+
+class ModemResponseError(Exception):
+    """An exception occurring when the modem returns an unexpected response."""
+
+    def __init__(self, msg: str, response: requests.Response):
+        super().__init__(msg)
+        self.response = response
+
+    def __str__(self):
+        return "{msg} - status: {code}".format(
+            msg=super().__str__(),
+            code=self.response.status_code
+        )
 
 
 class MultipleHnapsResponse():
@@ -22,7 +35,7 @@ class MultipleHnapsResponse():
 
     # Keys indexed in order of MotoConnDownstreamChannel / MotoConnUpstreamChannel response.
     DOWNSTREAM_KEYS = ['channel', 'locked', 'modulation',
-                       'channel_id', 'freq', 'pwr', 'snr', 'corrected', 'uncorrected']
+                       'channel_id', 'freq', 'snr', 'pwr', 'corrected', 'uncorrected']
     UPSTREAM_KEYS = ['channel', 'locked', 'type', 'channel_id', 'rate', 'freq', 'pwr']
 
     def __init__(self, json_response):
@@ -35,7 +48,7 @@ class MultipleHnapsResponse():
         info = self.response[self.CONNECTION_INFO]
         days, hms = info['MotoConnSystemUpTime'].split(' days ')
         parsed = time.strptime(hms, '%Hh:%Mm:%Ss')
-        uptime = (int(days) * 24 * 3600 + parsed.tm_hour * 3600 + parsed.tm_min * 60 + parsed.tm_sec)
+        uptime = (int(days) * 24 + parsed.tm_hour) * 3600 + parsed.tm_min * 60 + parsed.tm_sec
 
         return ConnectionInfo(
             uptime=uptime,
@@ -44,10 +57,16 @@ class MultipleHnapsResponse():
 
     def getDownstreamChannelInfo(self) -> Iterator[DownstreamChannelInfo]:
         channels = self.response[self.DOWNSTREAM_CHANNEL_INFO]['MotoConnDownstreamChannel']
+
+        # channels delimited by '|+|' and fields delimited by '^' ie:
+        # 1^Locked^QAM256^17^519.0^ 1.5^42.7^0^0^|+|2^Locked^QAM256^13^489.0^ 1.8^42.8^0^0^
         for ch in channels.split('|+|'):
             channel = dict(zip(self.DOWNSTREAM_KEYS, ch.strip('^').split('^')))
 
             yield DownstreamChannelInfo(
+                channel=int(channel['channel']),
+                channel_id=int(channel['channel_id']),
+                freq=float(channel['freq']),
                 locked=(channel['locked'].lower() == 'locked'),
                 pwr=float(channel['pwr']),
                 snr=float(channel['snr']),
@@ -57,10 +76,13 @@ class MultipleHnapsResponse():
 
     def getUpstreamChannelInfo(self) -> Iterator[UpstreamChannelInfo]:
         channels = self.response[self.UPSTREAM_CHANNEL_INFO]['MotoConnUpstreamChannel']
+
         for ch in channels.split('|+|'):
             channel = dict(zip(self.UPSTREAM_KEYS, ch.strip('^').split('^')))
 
             yield UpstreamChannelInfo(
+                channel=int(channel['channel']),
+                channel_id=int(channel['channel_id']),
                 locked=(channel['locked'].lower() == 'locked'),
                 rate=int(channel['rate']),
                 pwr=float(channel['pwr']),
@@ -124,26 +146,31 @@ class Modem:
 
         return self.session.post(self._get_hnap_uri(), headers=headers, json=payload, stream=True)
 
-    def _login_real(self, passkey) -> requests.Response:
+    def _login_real(self, passkey):
         payload = {'Login': {'Action': 'login',
                              'Captcha': '',
                              'LoginPassword': str(passkey),
                              'PrivateLogin': 'LoginPassword',
                              'Username': 'admin'}}
-        return self._soap_action('Login', payload)
+        response = self._soap_action('Login', payload)
+        _check_valid_response(response)
+        # possibly assert the result json_response['LoginResponse']['LoginResult'] == 'OK'
+        # but this will have an 'OK' response even when using a non-admin password.
 
     def login(self):
         """Complete the challenge / response authentication workflow."""
-        r = self._login_request()
-        json_response = json.loads(r.text)
-        lrdata = json_response['LoginResponse']
-        pubkey = lrdata['PublicKey']
-        challenge = lrdata['Challenge']
+        response = self._login_request()
+        json_response = _check_valid_response(response)
+        login_response = json_response['LoginResponse']
+
+        # Request may fail here, possibly due to multiple invalid login requests.
+        pubkey = login_response['PublicKey']
+        challenge = login_response['Challenge']
         privkey, passkey = self._generate_keys(challenge.encode(),
                                                pubkey.encode())
-        self.cookie_id = lrdata['Cookie']
+        self.cookie_id = login_response['Cookie']
         self.privatekey = privkey
-        return self._login_real(passkey)
+        self._login_real(passkey)
 
     def get_status(self) -> MultipleHnapsResponse:
         """Request metrics from the modem."""
@@ -153,10 +180,20 @@ class Modem:
                                         'GetMotoStatusUpstreamChannelInfo': '',
                                         'GetMotoLagStatus': ''}}
         response = self._soap_action('GetMultipleHNAPs', payload)
-        return MultipleHnapsResponse(response.json())
+        return MultipleHnapsResponse(_check_valid_response(response))
 
     def reboot(self) -> requests.Response:
         """Perform a modem reboot."""
         payload = {'SetStatusSecuritySettings': {'MotoStatusSecurityAction': '1',
                                                  'MotoStatusSecXXX': 'XXX'}}
         return self._soap_action('SetStatusSecuritySettings', payload)
+
+
+def _check_valid_response(response: requests.Response):
+    if (response.status_code == 200):
+        try:
+            return response.json()
+        except requests.exceptions.JSONDecodeError as e:
+            raise ModemResponseError('Could not parse JSON response', response) from e
+
+    raise ModemResponseError('Unexpected response code', response)

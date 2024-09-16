@@ -9,15 +9,20 @@ class ConnectionInfo:
 
 @dataclasses.dataclass
 class DownstreamChannelInfo:
+    channel: int
+    channel_id: int
+    freq: float
     locked: bool
-    pwr: float
     snr: float
+    pwr: float
     corrected: int
     uncorrected: int
 
 
 @dataclasses.dataclass
 class UpstreamChannelInfo:
+    channel: int
+    channel_id: int
     locked: bool
     rate: int
     pwr: float
