@@ -1,3 +1,5 @@
+"""Library for interacting with Motorola MB68xx series cable modems."""
+
 import hmac
 import requests
 import time
@@ -25,6 +27,8 @@ class ModemResponseError(Exception):
 
 
 class MultipleHnapsResponse():
+    """Class for parsing a JSON response from a Motorola MB68xx series modem HNAP API."""
+
     PARENT_KEY = 'GetMultipleHNAPsResponse'
     STARTUP_SEQUENCE = 'GetMotoStatusStartupSequenceResponse'
     CONNECTION_INFO = 'GetMotoStatusConnectionInfoResponse'
@@ -90,7 +94,7 @@ class MultipleHnapsResponse():
 
 
 class Modem:
-    """Class for interacting with a HNAP-based API on a MB68xx cable modem."""
+    """Class for interacting with a Motorola MB68xx series cable modem HNAP API."""
 
     def __init__(self, hostname: str, password: str, verify=False):
         """Initialize the modem.
@@ -164,6 +168,8 @@ class Modem:
         login_response = json_response['LoginResponse']
 
         # Request may fail here, possibly due to multiple invalid login requests.
+        if 'PublicKey' not in login_response:
+            raise ModemResponseError('PublicKey not present in response. ' '') 
         pubkey = login_response['PublicKey']
         challenge = login_response['Challenge']
         privkey, passkey = self._generate_keys(challenge.encode(),

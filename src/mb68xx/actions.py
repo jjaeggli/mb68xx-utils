@@ -10,6 +10,7 @@ MODEM_PASSWORD = 'MODEM_PASSWORD'
 
 
 def print_response(response: modem.MultipleHnapsResponse):
+    """Prints modem status and connectivity to stdout."""
     for ch in response.getUpstreamChannelInfo():
         print(ch)
 
