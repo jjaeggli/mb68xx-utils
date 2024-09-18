@@ -6,6 +6,9 @@ class ConnectionInfo:
     uptime: int
     network_access: bool
 
+    def as_dict(self):
+        return dataclasses.asdict(self)
+
 
 @dataclasses.dataclass
 class DownstreamChannelInfo:
@@ -18,6 +21,9 @@ class DownstreamChannelInfo:
     corrected: int
     uncorrected: int
 
+    def as_dict(self):
+        return dataclasses.asdict(self)
+
 
 @dataclasses.dataclass
 class UpstreamChannelInfo:
@@ -26,3 +32,6 @@ class UpstreamChannelInfo:
     locked: bool
     rate: int
     pwr: float
+
+    def as_dict(self):
+        return dataclasses.asdict(self)

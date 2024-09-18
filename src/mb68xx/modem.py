@@ -60,6 +60,9 @@ class MultipleHnapsResponse():
         )
 
     def getDownstreamChannelInfo(self) -> Iterator[DownstreamChannelInfo]:
+        if self.DOWNSTREAM_CHANNEL_INFO not in self.response:
+            return iter([])
+
         channels = self.response[self.DOWNSTREAM_CHANNEL_INFO]['MotoConnDownstreamChannel']
 
         # channels delimited by '|+|' and fields delimited by '^' ie:
@@ -79,6 +82,9 @@ class MultipleHnapsResponse():
             )
 
     def getUpstreamChannelInfo(self) -> Iterator[UpstreamChannelInfo]:
+        if self.UPSTREAM_CHANNEL_INFO not in self.response:
+            return iter([])
+
         channels = self.response[self.UPSTREAM_CHANNEL_INFO]['MotoConnUpstreamChannel']
 
         for ch in channels.split('|+|'):
